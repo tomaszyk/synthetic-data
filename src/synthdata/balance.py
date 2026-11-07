@@ -7,25 +7,57 @@ Both functions are yours to write; `uv run synth-train --method oversample` or
 import random
 
 from PIL import Image
+from torchvision import transforms
 
 
 def oversample(
     minority_photos: list[str], budget: int, rng: random.Random
 ) -> list[str]:
-    """Choose which Egyptian Mau training photos to repeat.
 
-    Return a list of exactly `budget` names taken from `minority_photos`; names
-    may repeat. Repeat the photos as evenly as possible and use `rng` for every
-    random choice, so a run can be reproduced from its seed.
-    """
-    raise NotImplementedError("write it in src/synthdata/balance.py (Meeting 1)")
+    if not minority_photos:
+        if budget == 0:
+            return []
+        raise ValueError("No minority photos available")
+
+    if budget < 0:
+        raise ValueError("Budget cannot be negative")
+
+    repeats, remainder = divmod(budget, len(minority_photos))
+
+    result = minority_photos * repeats
+
+    extra = rng.sample(minority_photos, remainder)
+    result.extend(extra)
+
+    rng.shuffle(result)
+
+    return result
 
 
 def augment(image: Image.Image) -> Image.Image:
-    """Return a randomly transformed copy of one Egyptian Mau training photo.
 
-    The training script calls this every time an added copy is loaded, so each
-    epoch sees a new variant. Typical choices are crops, flips, rotations, and
-    colour changes from `torchvision.transforms`. Keep the cat recognisable.
-    """
-    raise NotImplementedError("write it in src/synthdata/balance.py (Meeting 1)")
+    transformation = transforms.Compose([
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(degrees=10),
+        transforms.ColorJitter(
+            brightness=0.2,
+            contrast=0.2,
+            saturation=0.1
+        )
+    ])
+
+    return transformation(image.copy())
+
+# def augment(image: Image.Image) -> Image.Image:
+#
+#     transformation = transforms.Compose([
+#         transforms.RandomHorizontalFlip(p=0.5),
+#         transforms.RandomRotation(degrees=20),
+#         transforms.ColorJitter(
+#             brightness=0.3,
+#             contrast=0.3,
+#             saturation=0.2
+#         )
+#     ])
+#
+#     return transformation(image.copy())
