@@ -1,273 +1,323 @@
-# Synthetic Data Generation with Diffusion Models
 
-Starter repository for the course
-[Synthetic Data Generation with Diffusion Models](https://patrykbart.github.io/teaching/synthetic-data-generation-with-diffusion-models/).
-Every student answers the same question on the same data:
+# Laboratory 1 - Can a model learn to recognize less frequently represented cat breeds more accurately?
 
-> Can images made by diffusion models improve recognition of Egyptian Mau, an
-> underrepresented cat breed, without harming the other seven breeds?
+## 1. What is this project about?
 
-The repository already downloads the data, fine-tunes the classifier, and runs
-the diffusion models. Your work is to run controlled experiments, look at the
-images, and explain what changes the classifier and why.
+The aim of this project is to train a model to recognize different cat breeds from photographs. To do this, we use training datasets containing photographs of each breed.
 
-## Setup
+A problem arises when one breed has far fewer photographs than the others. This creates a situation in which the model's picture of the “world” is distorted.
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), create
-your own repository with **Use this template**, clone it, and run:
+That is exactly the situation in our project. We have 70 photographs for each of seven breeds, but only 15 for the eighth breed — Egyptian Mau. This means the model is likely to learn to recognize the seven well-represented breeds much better than Egyptian Mau. As a result, Egyptian Mau cats may be classified as belonging to other breeds.
 
-```bash
-uv sync --locked
-uv run synth-data
-uv run pytest
-```
+In this project, we investigate how to improve recognition of Egyptian Mau without having to obtain new photographs.
 
-`synth-data` downloads Oxford-IIIT Pet (about 800 MB) into `data/` and checks
-the course split, and `pytest` checks the starter code.
+We compare two ways of addressing the problem:
 
-### Hardware
+- **Oversampling** — reusing the same photographs multiple times (the dataset is brought up to 70 Egyptian Mau examples by repeating the original 15 photographs).
+- **Data augmentation** — creating slightly modified versions of existing photographs (the dataset is brought up to 70 Egyptian Mau examples using modified versions of the original 15 photographs).
 
-Measured on an RTX 5070 Ti laptop GPU (12 GB); slower GPUs take
-proportionally longer.
+We then check which method produces better results.
 
-| Task                                  |  Time | GPU memory | First download |
-| ------------------------------------- | ----: | ---------: | -------------: |
-| Train one run (5 seeds)               | 1 min |          – |          21 MB |
-| Text-to-image, SD 1.5, 110 images     | 3 min |     3.2 GB |     about 3 GB |
-| Text-to-image, SDXL-Turbo, 110 images | 1 min |     7.7 GB |     about 7 GB |
-| img2img (strength 0.5), 110 images    | 2 min |     3.2 GB |  (uses SD 1.5) |
-| IP-Adapter, 110 images                | 3 min |     4.4 GB |   + about 3 GB |
-| Inpainting or outpainting, 110 images | 3 min |     3.2 GB |     about 3 GB |
+## 2. What is the problem?
 
-Models download into `~/.cache/huggingface` the first time you use them. Add
-`--low-vram` to `synth-generate` on GPUs with less than 6 GB. Training also runs
-on a CPU, only slower; generating images on a CPU is impractically slow.
+Artificial intelligence systems learn to recognize objects from examples.
 
-Without a suitable GPU, use the faculty computers or a free cloud GPU such as
-Google Colab or Kaggle. In a notebook cell there, run:
+If we want to teach such a system to recognize a particular cat breed, we show it photographs of that breed and tell it what they depict (which specific breed it is).
 
-```text
-!git clone <your-repository-url> project
-%cd project
-!pip install -e .
-!synth-data
-```
+Over time, the system learns to identify characteristic features that distinguish one breed from another.
 
-and prefix every later command with `!`, for example
-`!synth-train --name m1-real --method real`. Commit and push your results from
-the notebook, or download them, before the session ends: its disk is erased.
-Download also the `model.pt` files of the runs you will test; they are not
-committed.
+The problem arises when some categories have significantly fewer examples than others.
 
-## The Fixed Experiment
+In our case, the model receives:
 
-- **Data:** eight cat breeds from Oxford-IIIT Pet, split in `data/split.csv`.
-  Each breed has 70 training photos except Egyptian Mau, which has 15. Every
-  breed has 20 validation and 30 test photos.
-- **Budget:** every method adds exactly 55 Egyptian Mau training examples, so
-  Egyptian Mau reaches the 70 photos of the other breeds.
-- **Classifier:** EfficientNet-B0 pretrained on ImageNet, fine-tuned for 8
-  epochs. Each experiment trains 5 models with seeds 0–4.
-- **Metrics:** Egyptian Mau recall (the share of Egyptian Mau photos recognised)
-  and macro-F1 over all eight breeds (to catch harm to the other breeds).
-- **Validation and test:** every run is evaluated on the validation photos,
-  which you use to compare settings and choose. At the end of each meeting,
-  `synth-test` evaluates the runs you chose on the test photos, and these test
-  results summarise the meeting.
+| Cat breed | Number of training photographs |
+|---|---:|
+| Abyssinian | 70 |
+| Bengal | 70 |
+| Birman | 70 |
+| Bombay | 70 |
+| Egyptian Mau | **15** |
+| Ragdoll | 70 |
+| Russian Blue | 70 |
+| Siamese | 70 |
 
-## Commands
+This situation is called an **imbalanced dataset**.
 
-| Command | What it does |
-| --- | --- |
-| `uv run synth-train --name NAME --method METHOD` | trains 5 seeds, saves `runs/NAME/` |
-| `uv run synth-generate --name NAME --prompt PROMPT [options]` | makes a pool of images in `pools/NAME/` |
-| `uv run synth-test --run NAME` | evaluates the saved models of a run on the test photos |
+It may cause the system to recognize breeds with many training photographs accurately while making more mistakes on the breed represented by only a small number of examples.
 
-`--method` is `real` (no added examples), `oversample`, `augment`, or
-`synthetic` with `--pool NAME`. Each pool has a `manifest.jsonl` line for every
-attempt, a `pool.json` with its settings, and a `contact-sheet.jpg` of its first
-24 images. Run any command with `--help` for all options.
+## 3. How did we try to solve this problem?
 
-## Results
+We conducted three types of experiments.
 
-Every `synth-train` run writes `runs/NAME/results.json` with the validation
-metrics of every seed. The tables and plots are yours to make from these files,
-for example with pandas and matplotlib, which are installed. Save them in
-`evidence/`.
+### Experiment 1 — no additional photographs
 
-Describe a run with your own variables using `--tag KEY=VALUE`, so that you can
-later group and plot runs by them:
+First, we trained the model to recognize cat breeds using the original data (only 15 photographs of Egyptian Mau).
 
-```bash
-uv run synth-train --name m3-strength-0.5 --method synthetic --pool m3-strength-0.5 \
-    --tag mode=img2img --tag strength=0.5
-```
+This experiment provides a baseline against which we can assess whether the other methods actually help.
 
-Numbers stay numbers, so `strength` can go on a plot axis. Running the same
-command again with other tags adds them without training again, and you can
-also edit `results.json` by hand. The file looks like this (the values are an
-example):
+### Experiment 2 — repeating existing photographs
 
-```json
-{
-  "name": "m3-strength-0.5",
-  "method": "synthetic",
-  "pool": "m3-strength-0.5",
-  "model": "efficientnet_b0",
-  "epochs": 8,
-  "batch_size": 64,
-  "budget": 55,
-  "split": "val",
-  "tags": {"mode": "img2img", "strength": 0.5},
-  "seeds": [
-    {"seed": 0, "egyptian_mau_recall": 0.75, "macro_f1": 0.9, "accuracy": 0.9,
-     "recall": {"Abyssinian": 0.95, "Bengal": 0.85}}
-  ]
-}
-```
+In the second experiment, we used a method called *oversampling*.
 
-`recall` lists all eight breeds. Each `runs/NAME/seed-K/` folder also has
-`metrics.json` with the confusion matrix, `predictions.csv` with the prediction
-for every validation photo, `run.json` with the exact training data, and
-`model.pt`, the trained model (about 16 MB, not committed) that `synth-test`
-evaluates on the test photos.
+Because we had only 15 photographs of Egyptian Mau, compared with 70 for each other breed, we added 55 repetitions of existing photographs to the training process.
 
-## Meeting 1 — Real-Data Baselines
+This gave the model a total of 70 Egyptian Mau examples, although 55 of them were repeated copies of the 15 original photographs.
 
-Write `oversample()` and `augment()` in `src/synthdata/balance.py`, then:
+We distributed the repetitions as evenly as possible among the photographs.
 
-```bash
-uv run synth-train --name m1-real --method real
-uv run synth-train --name m1-oversample --method oversample
-uv run synth-train --name m1-augment --method augment
-```
+**Details of the `oversample()` method:** The function takes a list of Egyptian Mau photographs, the number of additional examples required (`budget` — 55 photographs), and a pseudorandom number generator (`rng`). We divide 55 by 15, giving three complete repetitions of each photograph (45 examples, ensuring an even distribution) and a remainder of 10. We then randomly select 10 distinct photographs for one further repetition and shuffle the complete list. As a result, 10 photographs appear four times each and the remaining five appear three times each among the additional examples.
 
-Then compare the three runs, seed by seed, in your own table and plot, and
-write down what the validation results show. Only then test the three
-baselines:
+**Important:** This method does not create new photographs. It simply makes the model encounter examples of the underrepresented breed more often during training.
 
-```bash
-uv run synth-test --run m1-real
-uv run synth-test --run m1-oversample
-uv run synth-test --run m1-augment
-```
+### Experiment 3 — modifying existing photographs
 
-`synth-test` evaluates the saved model of every seed on the 240 test photos and
-writes `runs/NAME/test-results.json` in the same format as `results.json`, plus
-`test-metrics.json` and `test-predictions.csv` in every seed folder. Add
-`--seeds 0` to test only the model of seed 0. Every meeting ends the same way:
-choose on the validation results, write the choice down, then test the chosen
-runs and report their test values. The baselines' test results are the
-reference for every later meeting.
+In the third experiment, we applied *data augmentation*.
 
-## Meeting 2 — Text-to-Image Generation
+Instead of repeating identical photographs, we created modified versions of them.
 
-`--prompt` has no default: write the description yourself, and repeat the option
-to cycle through several prompts.
+The photographs could be:
 
-```bash
-uv run synth-generate --name m2-base --prompt "<your prompt>"
-uv run synth-train --name m2-base --method synthetic --pool m2-base
-```
+- flipped horizontally,
+- rotated slightly,
+- brightened or darkened,
+- adjusted in contrast and color saturation.
 
-Then make new pools that change one setting each, and tag each run with the
-setting you changed:
+**Exact settings for standard augmentation (`augment()`):** A horizontal flip with probability 0.5 (50%); a random rotation between −10° and +10°; random brightness variation of 0.2; contrast variation of 0.2; and color saturation variation of 0.1. Under the standard interpretation of these settings, the brightness and contrast factors range from 0.8 to 1.2, while the saturation factor ranges from 0.9 to 1.1, where a value of 1 means no change. The function returns a modified copy of the image; the original remains unchanged.
 
-```bash
-uv run synth-generate --name m2-guidance-3 --prompt "<your prompt>" --guidance 3
-uv run synth-train --name m2-guidance-3 --method synthetic --pool m2-guidance-3 \
-    --tag guidance=3
-```
+This allowed the model to see the same cat under slightly different conditions.
 
-| Option | Meaning | Default |
-| --- | --- | --- |
-| `--model` | `sd15` (Stable Diffusion 1.5) or `sdxl-turbo` | `sd15` |
-| `--prompt` | text prompt; repeat the option to cycle through several | none: required |
-| `--negative-prompt` | what the image should not contain | drawings, text, extra limbs… |
-| `--steps` | denoising steps of the sampler | 30 (SDXL-Turbo: 4) |
-| `--guidance` | how strongly the image follows the prompt | 7.5 (SDXL-Turbo: 0) |
-| `--scheduler` | sampler: `dpm`, `ddim`, `euler`, or `default` | `dpm` |
-| `--seed` | seed of the first image; image *i* uses seed + *i* | 1000 |
-| `--count` | images in the pool | 110 |
+We wanted to find out whether this variety would help it recognize the breed's characteristic features more accurately.
 
-Choose the pool you take forward on the validation results, write the choice
-down, and test its run with `uv run synth-test --run NAME`.
+We also compared two augmentation variants: milder and stronger modifications.
 
-## Meeting 3 — Generation from Training Photos
+**Parameter comparison (standard → stronger augmentation):** Horizontal flip probability: 0.5 → 0.5; maximum rotation: ±10° → ±20°; brightness variation: 0.2 → 0.3; contrast variation: 0.2 → 0.3; saturation variation: 0.1 → 0.2. In the second variant, we changed only the transformation ranges. After the experiment, we restored the standard augmentation settings in the code.
 
-You do not pass a photo: both modes start from the 15 Egyptian Mau training
-photos, used in turn, and the command prints which ones. Add
-`--source Egyptian_Mau_117` (repeat it for more) to start only from the
-training photos you choose; any other photo is refused. Both modes still need
-`--prompt`: keep it the same within a sweep, for example the prompt of the pool
-you took forward from Meeting 2.
+## 4. How did we evaluate performance?
 
-```bash
-uv run synth-generate --name m3-strength-0.5 --mode img2img --strength 0.5 \
-    --prompt "<your prompt>"
-uv run synth-generate --name m3-ip-0.5 --mode ip-adapter --ip-adapter-scale 0.5 \
-    --prompt "<your prompt>"
-uv run synth-train --name m3-ip-0.5 --method synthetic --pool m3-ip-0.5 \
-    --tag mode=ip-adapter --tag scale=0.5
-```
+We used the Oxford-IIIT Pet dataset, which contains photographs of different cat breeds.
 
-- `--strength` (img2img): how much of the photo is replaced by noise. Near 0
-  the result is almost a copy; near 1 it is almost a new image. The model runs
-  only steps × strength of the denoising steps.
-- `--ip-adapter-scale` (ip-adapter): how strongly the photo steers a new
-  image. The pose and background may change; the cat should look similar.
+The photographs were divided into three groups:
 
-Choose the best run of each mode on the validation results, write the choice
-down, and test both runs with `synth-test`.
+| Dataset | Number of photographs | Purpose |
+|---|---:|---|
+| Training | 505 | The model learns to recognize breeds (7 breeds × 70 photographs + 15 Egyptian Mau photographs) |
+| Validation | 160 | We compare the three methods (original dataset with 15 Egyptian Mau photographs, oversampling, and augmentation) and identify which produces the best results |
+| Test | 240 | We assess the final performance on photographs not used for training or for selecting settings |
 
-## Meeting 4 — Editing Training Photos
+We repeated each experimental variant five times because training results can vary slightly depending on random initial settings.
 
-```bash
-uv run synth-generate --name m4-backgrounds --mode inpaint \
-    --prompt "<scene 1>" --prompt "<scene 2>" --prompt "<scene 3>"
-uv run synth-generate --name m4-outpaint-1.5 --mode outpaint --outpaint-scale 1.5 \
-    --prompt "<your prompt>"
-```
+We used the EfficientNet-B0 image classification model, which had already been pretrained to analyze photographs. We adapted it to recognize eight cat breeds.
 
-- `inpaint` keeps the real cat and paints a new background. The mask comes from
-  the Oxford-IIIT Pet annotations; the contact sheet shows it in red. Describe
-  the whole photo in `--prompt`, the cat and its new surroundings, and repeat
-  the option to use several scenes in turn. The annotation of
-  `Egyptian_Mau_165` marks no cat, so inpainting skips that photo and starts
-  from the other 14.
-- `outpaint` shrinks the photo into the centre and paints the surroundings, as
-  if the camera moved back. `--outpaint-scale` sets how far: 1.25 to 2.
+**Training parameters:** We used EfficientNet-B0 pretrained on ImageNet (*transfer learning*). Each training run lasted 8 epochs, with a batch size of 64. Each variant was run five times using random seeds 0, 1, 2, 3, and 4. An *epoch* means one pass through the training data, while *batch size* is the number of photographs processed in one batch.
 
-As in Meeting 3, both modes start from the training photos themselves and print
-which ones; `--source` chooses some of them. As in every meeting, choose the
-best run of each mode on the validation results, write the choice down, and
-test both runs.
+### How do we measure performance?
 
-## Meeting 5 — Final Comparison
+We were mainly interested in two metrics:
 
-No new tests are needed. Collect the test results of the runs you chose in
-Meetings 1–4 into your final table and plot, compute the differences between
-methods yourself, and compare the ranking with the validation results.
+**Recall for Egyptian Mau** — measures the proportion of photographs actually showing this breed that the model correctly identified.
 
-## What to Commit
+**Formula:**
 
-Commit `EXPERIMENTS.md`, your tables and plots in `evidence/`, `runs/`, and each
-pool's `manifest.jsonl`, `pool.json`, and `contact-sheet.jpg`. Generated images,
-downloaded data, and model weights, including the `model.pt` of every run, stay
-local; `.gitignore` already excludes them, and the manifests record how to
-recreate every image.
+\[
+\mathrm{Recall}=\frac{TP}{TP+FN}
+\]
 
-## Rules
+Here, **TP** (*true positives*) is the number of Egyptian Mau photographs correctly identified, and **FN** (*false negatives*) is the number of Egyptian Mau photographs incorrectly assigned to other breeds.
 
-- Change one setting at a time and keep the budget at 55.
-- Do not delete pools or images you do not like: describe them.
-- Generation uses only the 15 Egyptian Mau training photos; the tools enforce
-  this.
-- Choose on the validation results and write the choice down before testing.
-  Test only the chosen runs, and do not revise a choice after its test result.
+For example, if the model correctly identifies 15 out of 20 Egyptian Mau photographs, recall is 75%.
 
-## Coding Agent
+**Macro-F1** — evaluates recognition quality across all eight breeds, giving each breed equal weight.
 
-If you already use Codex or Claude Code, nothing else is required. Otherwise,
-install [Antigravity CLI](https://antigravity.google/docs/cli/install/). You
-must be able to explain every command, setting, and result you submit.
+**Formula:**
+
+\[
+\mathrm{Macro\text{-}F1}=\frac{F1_1+F1_2+\cdots+F1_8}{8}
+\]
+
+Here, **F1₁, F1₂, …, F1₈** are the F1 scores for the eight cat breeds. Thus, all eight breeds have equal weight.
+
+This allows us to check whether improving recognition of Egyptian Mau comes at the cost of poorer results for the other breeds.
+
+## 5. What results did we obtain?
+
+First, we compared the methods on the validation dataset.
+
+| Method | Mean Egyptian Mau recall |
+|---|---:|
+| No data balancing | 50% |
+| Repeating photographs (oversampling) | 69% |
+| Modifying photographs (augmentation) | **72%** |
+| Stronger augmentation | **72%** |
+
+Both methods produced a clear improvement.
+
+Stronger augmentation did not improve mean recall compared with standard augmentation. We therefore decided to keep the milder transformations.
+
+### Final results
+
+After selecting the method (augmentation), we evaluated performance on a separate test dataset.
+
+| Method | Mean Egyptian Mau recall | Mean macro-F1 |
+|---|---:|---:|
+| No data balancing | 51.3% | 0.855 |
+| Oversampling | 69.3% | 0.878 |
+| Augmentation | **74.0%** | **0.882** |
+
+The best result was achieved with augmentation.
+
+Compared with the initial experiment, the proportion of Egyptian Mau photographs correctly recognized increased by approximately **22.7 percentage points**.
+
+At the same time, macro-F1 improved, indicating that better recognition of Egyptian Mau was accompanied by an improvement in overall classification quality in our experiment.
+
+## 6. What did we learn from the experiment?
+
+The results suggest that it is possible to improve an image recognition system without obtaining new photographs.
+
+Simply reusing existing photographs more frequently produced a noticeable improvement.
+
+We obtained even better results when the model also learned from modified versions of those photographs.
+
+This does not mean that augmentation will always be the best solution. We worked with one specific dataset, one type of model, and five repetitions of each experiment.
+
+Results may differ in another task.
+
+**Main conclusion:** The way training data is prepared can have a significant impact on how well an artificial intelligence system recognizes underrepresented categories.
+
+## 7. Technical information and project code
+
+This project was based on a template provided for the *Synthetic Data* course.
+
+As part of the assignment, we independently implemented two functions in `src/synthdata/balance.py`:
+
+- `oversample()` — selects photographs to be reused.
+- `augment()` — creates randomly modified versions of photographs.
+
+The remaining components of the template make it possible to download the data, train the model, and calculate the results.
+
+A detailed description of the experiments, the results of all five repetitions, the commands used, and the charts can be found in **[EXPERIMENTS.md](EXPERIMENTS.md)**.
+
+The code and experiment results are available in the `src/`, `runs/`, and `evidence/` directories.
+
+
+## Laboratory 2 - Can AI-generated images improve cat breed recognition?
+
+### 1. Why did we conduct another experiment?
+
+In the first laboratory, we investigated whether recognition of the Egyptian Mau breed could be improved by repeatedly using the same photographs (*oversampling*) or by creating modified versions of existing photographs (*data augmentation*).
+
+Both methods improved the classifier's performance. Data augmentation was particularly effective, increasing the proportion of correctly recognized Egyptian Mau cats on the test dataset from 51.3% to 74.0%.
+
+However, both methods have a limitation: they rely entirely on information contained in the original 15 photographs. Rotating a photograph or adjusting its brightness does not allow the model to see a completely different cat.
+
+We therefore decided to test a new approach: **generate synthetic photographs of Egyptian Mau cats and investigate whether they improve the classifier's recognition performance.**
+
+### 2. How can we generate synthetic photographs of Egyptian Mau cats?
+
+We used **Stable Diffusion 1.5** to generate the photographs.
+
+Stable Diffusion is an artificial intelligence model that can create images from text descriptions, an approach known as *text-to-image generation*. For example, we can ask it to generate a realistic photograph of a silver Egyptian Mau cat with green eyes and distinctive spots.
+
+Its operation is based on a technique called **diffusion**.
+
+During the training of diffusion models, Gaussian noise is gradually added to images. Initially, the original photograph remains recognizable, but after many steps of adding noise, the image becomes completely unrecognizable and consists almost entirely of random noise.
+
+During training, the model learns to predict the noise added to an image. During generation, these predictions can be used to gradually remove noise. The process starts with random noise, which is transformed step by step into an image corresponding to the text description.
+
+In Stable Diffusion, these operations are performed not directly on image pixels, but on a compressed representation of the image. Only at the end is the resulting representation converted into a visible image.
+
+The text description guides the model toward generating an image with the requested features.
+
+**Important:** We did not train Stable Diffusion during this experiment. Instead, we used an already pretrained model to generate new images based on a description of the Egyptian Mau breed.
+
+### 3. How did we prepare the synthetic images?
+
+We generated four pools of Egyptian Mau photographs. Each pool contained **110 images** with a resolution of 512 × 512 pixels.
+
+We used the same text prompt in every case:
+
+> A realistic photograph of an Egyptian Mau cat, silver spotted coat, green eyes, short hair, natural lighting
+
+We also used a *negative prompt*, which specifies elements that the model should avoid generating. These included illustrations, text, watermarks, extra limbs, and multiple cats in one photograph.
+
+Our goal was to obtain images that resembled real photographs of cats as closely as possible.
+
+However, we did not assume that every generated image would be correct. A generative model may produce a cat with an unnatural appearance, incorrect anatomy, or coat patterns characteristic of another breed.
+
+For this reason, in addition to evaluating the classifier's performance, we visually inspected samples of the generated images.
+
+### 4. Why did we generate four different image pools?
+
+We wanted to investigate whether the generator's settings affect the quality of synthetic images and, consequently, the classifier's performance.
+
+We compared two Stable Diffusion parameters:
+
+**Guidance** — determines how strongly the model follows the text description when generating an image.
+
+With a low guidance value, the model has greater freedom when generating images. With a high value, it follows the text more strongly, but may exaggerate certain features, such as coat patterns or eye color.
+
+**Steps** — the number of steps used to gradually transform noise into an image.
+
+More steps mean additional stages of image generation and generally higher computational cost. However, increasing the number of steps does not guarantee that an image will be better or more useful for training the classifier.
+
+We used the following settings:
+
+| Pool | Guidance | Steps | Purpose |
+|---|---:|---:|---|
+| `m2-base` | 7.5 | 30 | Baseline settings |
+| `m2-guidance2` | 2.0 | 30 | Effect of low guidance |
+| `m2-guidance15` | 15.0 | 30 | Effect of high guidance |
+| `m2-steps10` | 7.5 | 10 | Effect of reducing generation steps |
+
+In each alternative configuration, **only one parameter was changed relative to the baseline settings**.
+
+This allowed us to compare the effects of individual parameters rather than changing several settings simultaneously.
+
+### 5. How did we use the generated images?
+
+In the first laboratory, our training dataset contained 505 photographs:
+
+- 490 photographs of seven well-represented breeds,
+- 15 photographs of Egyptian Mau cats.
+
+In the second laboratory, we added **55 generated Egyptian Mau images** to the same dataset. These were randomly selected from the corresponding pool of 110 images.
+
+As a result, each training dataset contained 560 examples, including 70 Egyptian Mau examples: 15 real photographs and 55 synthetic images.
+
+Why did we generate 110 images if we only needed 55?
+
+We wanted to have a larger pool from which we could randomly select images for individual training runs. This meant that we did not have to use exactly the same synthetic photographs every time.
+
+Each of the four configurations was evaluated in five training runs using different random seeds.
+
+In total, we performed **20 classifier training runs**.
+
+We continued to use EfficientNet-B0 so that the new results could be compared with those obtained in the first laboratory.
+
+### 6. How did we evaluate the effectiveness of synthetic images?
+
+We used the same two evaluation metrics as in the previous laboratory:
+
+**Egyptian Mau recall** — measures the proportion of real Egyptian Mau photographs that the classifier correctly recognizes.
+
+**Macro-F1** — measures classification performance across all eight breeds, giving each breed equal importance.
+
+This is important because we want to improve Egyptian Mau recognition without significantly reducing performance on the other breeds.
+
+We evaluated the classifier using **only real photographs**, not images generated by Stable Diffusion.
+
+First, we compared all four configurations on the validation dataset. After selecting the best-performing configuration, we evaluated it on a separate test dataset.
+
+This procedure helps reduce the risk of choosing settings that perform particularly well on the test photographs by chance.
+
+### 7. What results did we obtain?
+
+The table below presents the average validation results across five training runs.
+
+| Pool | Egyptian Mau recall | Macro-F1 |
+|---|---:|---:|
+| `m2-base` | **80.0%** | **0.910** |
+| `m2-guidance2` | 79.0% | 0.892 |
+| `m2-guidance15` | 73.0% | 0.895 |
+| `m2-steps10` | 79.0% | 0.903 |
+
+The best results were obtained using

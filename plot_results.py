@@ -16,6 +16,13 @@ RUNS = {
     "Strong augmentation": "m1-augment-strong",
 }
 
+M2_RUNS = {
+    "Base": "m2-base",
+    "Guidance 2": "m2-guidance2",
+    "Guidance 15": "m2-guidance15",
+    "Steps 10": "m2-steps10",
+}
+
 
 def load_results():
     results = {}
@@ -76,3 +83,29 @@ create_plot(
 )
 
 print("Both plots generated successfully.")
+
+# Meeting 2 — synthetic image generation
+
+original_runs = RUNS.copy()
+
+RUNS.clear()
+RUNS.update(M2_RUNS)
+
+m2_results = load_results()
+
+create_plot(
+    m2_results,
+    "egyptian_mau_recall",
+    "Meeting 2 - Egyptian Mau Recall (Validation)",
+    "m2_recall.png"
+)
+
+create_plot(
+    m2_results,
+    "macro_f1",
+    "Meeting 2 - Macro-F1 (Validation)",
+    "m2_macro_f1.png"
+)
+
+RUNS.clear()
+RUNS.update(original_runs)

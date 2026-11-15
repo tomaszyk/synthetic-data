@@ -169,16 +169,195 @@ The `m1-real`, `m1-oversample`, and `m1-augment` test results serve as the **rea
 
 ## Meeting 2 — Text-to-image generation
 
-*To be completed after Meeting 2 experiments.*
+### Research question
 
-- **Question:**
-- **Setting changed in each pool (one at a time):**
-- **Commands:**
-- **Contact sheets:** (good and bad images, with the failure types identified)
-- **Results on validation:** (table with every seed and plot)
-- **What I see:**
-- **Pool I take forward, and why:**
-- **Its test result, compared with the baselines:**
+Can diffusion-generated Egyptian Mau images improve minority-class recognition compared with real-data baselines, including oversampling and conventional augmentation?
+
+How do changes in generation parameters affect the usefulness of synthetic training data?
+
+### Experimental setup
+
+Synthetic images were generated using Stable Diffusion 1.5 in text-to-image mode on an NVIDIA Tesla T4 GPU.
+
+Four pools of 110 images were generated. In each training run, 55 synthetic images were sampled from the corresponding pool and added to the original 505 training images.
+
+The classifier was ImageNet-pretrained EfficientNet-B0, fine-tuned using the course template.
+
+Each pool was evaluated using five training seeds (0–4). Validation and test evaluation used only real photographs.
+
+### Generation settings
+
+All pools used the same prompt:
+
+> A realistic photograph of an Egyptian Mau cat, silver spotted coat, green eyes, short hair, natural lighting
+
+Negative prompt:
+
+> illustration, painting, cartoon, text, watermark, multiple cats, deformed animal, extra limbs
+
+The model, prompt, resolution (512 × 512), DPM scheduler, initial generation seed (1000), and all other settings were held constant unless explicitly listed below.
+
+| Pool | Guidance | Steps | Parameter changed |
+|---|---:|---:|---|
+| `m2-base` | 7.5 | 30 | Baseline |
+| `m2-guidance2` | 2.0 | 30 | Guidance |
+| `m2-guidance15` | 15.0 | 30 | Guidance |
+| `m2-steps10` | 7.5 | 10 | Steps |
+
+Each alternative pool changed one setting relative to `m2-base`.
+
+### Commands
+
+Generation used the following commands:
+
+```bash
+uv run synth-generate --name m2-base --mode t2i --model sd15 --count 110 --prompt "A realistic photograph of an Egyptian Mau cat, silver spotted coat, green eyes, short hair, natural lighting" --device cuda
+
+uv run synth-generate --name m2-guidance2 --mode t2i --model sd15 --count 110 --prompt "A realistic photograph of an Egyptian Mau cat, silver spotted coat, green eyes, short hair, natural lighting" --guidance 2 --device cuda
+
+uv run synth-generate --name m2-guidance15 --mode t2i --model sd15 --count 110 --prompt "A realistic photograph of an Egyptian Mau cat, silver spotted coat, green eyes, short hair, natural lighting" --guidance 15 --device cuda
+
+uv run synth-generate --name m2-steps10 --mode t2i --model sd15 --count 110 --prompt "A realistic photograph of an Egyptian Mau cat, silver spotted coat, green eyes, short hair, natural lighting" --steps 10 --device cuda
+```
+
+Classification experiments:
+
+```bash
+uv run synth-train --name m2-base --method synthetic --pool m2-base
+uv run synth-train --name m2-guidance2 --method synthetic --pool m2-guidance2
+uv run synth-train --name m2-guidance15 --method synthetic --pool m2-guidance15
+uv run synth-train --name m2-steps10 --method synthetic --pool m2-steps10
+```
+
+The selected model configuration was evaluated on the test set:
+
+```bash
+uv run synth-test --run m2-base
+```
+
+### Contact sheets and visual assessment
+
+Each pool contains a contact sheet showing the first 24 generated images.
+
+**Baseline pool**
+
+![Baseline contact sheet](pools/m2-base/contact-sheet.jpg)
+
+The images are generally photorealistic, but some cats have exaggerated spotting resembling Bengal cats. Repeated close-up portraits are also visible.
+
+**Low guidance — 2.0**
+
+![Guidance 2 contact sheet](pools/m2-guidance2/contact-sheet.jpg)
+
+Most images are recognizable as cats, but some contain composition and anatomical inconsistencies. Image #0 shows overlapping cat faces. Some portraits are unusually cropped.
+
+**High guidance — 15.0**
+
+![Guidance 15 contact sheet](pools/m2-guidance15/contact-sheet.jpg)
+
+Images show stronger contrast and more saturated colors. Several cats have exaggerated fur patterns and unnaturally intense eyes, suggesting that high guidance can produce visually exaggerated results.
+
+**Fewer generation steps — 10**
+
+![Steps 10 contact sheet](pools/m2-steps10/contact-sheet.jpg)
+
+Image quality is generally comparable to the baseline. However, exaggerated coat markings, repeated close-up compositions, and occasional compositional defects are still present.
+
+**Observed failure categories:**
+
+- Breed ambiguity: some cats resemble Bengal cats rather than Egyptian Mau.
+- Exaggerated coat patterns: unusually large or high-contrast spots.
+- Anatomical/composition artifacts: overlapping faces or abnormal image composition.
+- Limited visual diversity: repeated close-up portraits and similar poses.
+- Unrealistic appearance: excessively saturated eyes or colors.
+
+These observations are based on the first 24 images displayed in each contact sheet, not a systematic inspection of all 110 images.
+
+### Validation results
+
+#### Egyptian Mau recall
+
+| Seed | Base | Guidance 2 | Guidance 15 | Steps 10 |
+|---|---:|---:|---:|---:|
+| 0 | 0.800 | 0.800 | 0.750 | 0.800 |
+| 1 | 0.750 | 0.800 | 0.700 | 0.750 |
+| 2 | 0.750 | 0.700 | 0.650 | 0.750 |
+| 3 | 0.850 | 0.800 | 0.750 | 0.850 |
+| 4 | 0.850 | 0.850 | 0.800 | 0.800 |
+| **Mean** | **0.800** | **0.790** | **0.730** | **0.790** |
+
+#### Macro-F1
+
+| Seed | Base | Guidance 2 | Guidance 15 | Steps 10 |
+|---|---:|---:|---:|---:|
+| 0 | 0.918 | 0.906 | 0.899 | 0.918 |
+| 1 | 0.893 | 0.874 | 0.880 | 0.887 |
+| 2 | 0.906 | 0.886 | 0.886 | 0.900 |
+| 3 | 0.906 | 0.887 | 0.893 | 0.906 |
+| 4 | 0.925 | 0.906 | 0.919 | 0.906 |
+| **Mean** | **0.910** | **0.892** | **0.895** | **0.903** |
+
+The reported means are calculated from the rounded console values. Full-precision results are available in the experiment JSON files.
+
+### Validation plots
+
+#### Egyptian Mau recall across five seeds
+
+![Meeting 2 recall](evidence/m2_recall.png)
+
+#### Macro-F1 across five seeds
+
+![Meeting 2 Macro-F1](evidence/m2_macro_f1.png)
+
+### Observations and pool selection
+
+The baseline generation settings achieved the highest mean Egyptian Mau recall (0.800) and Macro-F1 (approximately 0.910).
+
+Reducing guidance to 2.0 produced slightly lower results.
+
+Increasing guidance to 15.0 reduced mean Egyptian Mau recall to 0.730 and led to visually exaggerated images.
+
+Reducing generation steps from 30 to 10 produced results close to the baseline, although the mean Macro-F1 was slightly lower.
+
+**The selected pool is `m2-base`**, based on its validation performance across all five seeds.
+
+The decision was made before evaluating the selected pool on the test set.
+
+### Final test results — selected pool
+
+The five saved models trained using `m2-base` were evaluated on the held-out test set.
+
+| Seed | Egyptian Mau recall | Macro-F1 |
+|---|---:|---:|
+| 0 | 0.767 | 0.888 |
+| 1 | 0.767 | 0.887 |
+| 2 | 0.667 | 0.882 |
+| 3 | 0.733 | 0.887 |
+| 4 | 0.800 | 0.883 |
+| **Mean** | **0.747** | **0.885** |
+
+#### Comparison with Meeting 1 baselines
+
+| Method | Mean test Egyptian Mau recall | Mean test Macro-F1 |
+|---|---:|---:|
+| Real-data baseline | 0.513 | 0.855 |
+| Oversampling | 0.693 | 0.878 |
+| Conventional augmentation | 0.740 | 0.882 |
+| **Synthetic data — `m2-base`** | **0.747** | **0.885** |
+
+### Conclusions
+
+Synthetic data significantly improved Egyptian Mau recall compared with the original imbalanced baseline.
+
+The selected synthetic pool achieved a mean test recall of approximately 0.747, compared with 0.513 for the real-data baseline.
+
+However, its advantage over conventional augmentation was very small: 0.747 versus 0.740.
+
+The validation results favored `m2-base`, and the test results confirmed that it was competitive with the strongest real-data balancing method.
+
+The experiment does not establish that diffusion-generated images are consistently superior to ordinary augmentation. Synthetic data generation is computationally more expensive and can introduce unrealistic visual features or ambiguous class labels.
+
+For this task, synthetic images appear useful, but the limited improvement over conventional augmentation does not yet justify a strong recommendation to replace simpler methods.
 
 ## Meeting 3 — Generation from training photos
 
